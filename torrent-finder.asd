@@ -6,7 +6,9 @@
   :license "Specify license here"
   :depends-on (#:flexi-streams
                #:bencode
-               #:usocket)
+               #:usocket
+               #:ironclad
+               #:log4cl)
   :serial t
   :components ((:file "package")
                (:file "torrent-finder")))
