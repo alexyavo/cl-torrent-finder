@@ -78,15 +78,21 @@
                  :host host
                  :port port)))
 
-(defun read-compact-node-info (stream)
-  (let ((node-id (make-array +node-id-length+ :element-type '(unsigned-byte 8)))
-        (node-address (make-array +compact-node-adress-length+
-                                  :element-type '(unsigned-byte 8))))
+(defun read-node-id (stream)
+  (let ((node-id (make-array +node-id-length+ :element-type '(unsigned-byte 8))))
     (read-sequence node-id stream)
-    (read-sequence node-address stream)
-    (make-instance 'dht/compact-node-info
-                   :node-id node-id
-                   :node-address (compact-address->endpoint-address node-address))))
+    node-id))
+
+(defun read-node-address (stream)
+  (let ((compact-address (make-array +compact-node-adress-length+
+                                     :element-type '(unsigned-byte 8))))
+    (read-sequence compact-address stream)
+    (compact-address->endpoint-address compact-address)))
+
+(defun read-compact-node-info (stream)
+  (make-instance 'dht/compact-node-info
+                 :node-id (read-node-id stream)
+                 :node-address (read-node-address stream)))
 
 (defparameter +default-query-base+ (make-instance 'dht/query-base))
 
@@ -104,8 +110,6 @@
 (defparameter +error-description-list-key+ "e")
 (defparameter +id-key+ "id")
 
-
-
 (defparameter +router-bittorrent+
   (make-instance 'endpoint-address :host "router.bittorrent.com" :port 6881))
 
@@ -113,9 +117,9 @@
   (make-array +max-response-bytes+ :element-type '(unsigned-byte 8)))
 
 (defparameter bencode:*binary-key-p* (lambda (keys)
-                                       (print keys)
                                        (if (or (equal (first keys) +response-args-key+)
-                                               (equal (first keys) "values"))
+                                               (equal (first keys) "values")
+                                               (equal (first keys) "p"))
                                            nil
                                          t)))
 
@@ -165,17 +169,24 @@
 
 (defun perform-query (query address)
   (with-connected-socket
-     (query-socket (socket-connect (host address) (port address) :protocol :datagram))
+     (query-socket (socket-connect (host address) (port address)
+                                   :protocol :datagram
+                                   :timeout 2))
      (socket-send query-socket query (length query))
      (multiple-value-bind (response-buffer response-length)
          (socket-receive query-socket nil +max-response-bytes+)
-       (format t "~a~%" (octets-to-string response-buffer :start 0 :end response-length))
+       (log:debug "Recieved response:~%~a"
+                  (octets-to-string response-buffer :start 0 :end response-length))
+       (log:debug (hex-dump (subseq response-buffer 0 response-length)))
        (bencode:decode (subseq response-buffer 0 response-length)))))
 
 (defun parse-compact-nodes-info (info-vec)
   (let ((nodes-stream (make-flexi-stream (make-in-memory-input-stream info-vec))))
     (loop until (null (peek-byte nodes-stream nil nil nil))
           collect (read-compact-node-info nodes-stream))))
+
+(defun parse-peer-values (values)
+  (loop for value in values collect (compact-address->endpoint-address value)))
 
 (defun dht/ping (address)
   (let ((response-dict (perform-query (make-ping-query) address)))
@@ -208,11 +219,11 @@
     (when peer-nodes
       (setf peer-nodes (parse-compact-nodes-info peer-nodes)))
     (when peer-values
-      (error "not implemented values parsing yet"))))
+      (setf peer-values (parse-peer-values peer-values)))))
 
 (defmethod print-object ((response get-peers-response) stream)
   (with-slots (peer-nodes peer-values token) response
-    (format stream "nodes: ~a~%peer-values: ~a~%token: ~a"
+    (format stream "peer-nodes: ~a~%peer-values: ~a~%token: ~a"
             peer-nodes peer-values token)))
 
 (defun dht/get-peers (address info-hash)
@@ -222,5 +233,5 @@
       (let* ((response-args (gethash +response-args-key+ response-dict)))
         (make-instance 'get-peers-response
                        :peer-nodes (gethash "nodes" response-args)
-                       :peer-values (gethash "value" response-args)
+                       :peer-values (gethash "values" response-args)
                        :token (gethash "token" response-args))))))

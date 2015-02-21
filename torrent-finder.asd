@@ -11,4 +11,5 @@
                #:log4cl)
   :serial t
   :components ((:file "package")
+               (:file "hexdump")
                (:file "torrent-finder")))

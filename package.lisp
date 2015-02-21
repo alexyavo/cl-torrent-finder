@@ -6,7 +6,8 @@
                 #:octets-to-string
                 #:string-to-octets
                 #:make-in-memory-input-stream
-                #:make-flexi-stream)
+                #:make-flexi-stream
+                #:peek-byte)
 
   (:import-from #:usocket
                 #:socket-connect
