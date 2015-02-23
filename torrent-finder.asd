@@ -6,7 +6,6 @@
   :license "MIT"
   :depends-on (#:utils
                #:flexi-streams
-               #:bencode
                #:usocket
                #:ironclad
                #:log4cl)

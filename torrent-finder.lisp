@@ -9,15 +9,15 @@
 
 (defun print-hash-table (hash-table)
   (with-hash-table-iterator
-   (it hash-table)
-   (loop (multiple-value-bind (entry? key value) (it)
-           (if entry?
-               (print-hash-table-entry key value)
-             (return))))))
+      (it hash-table)
+    (loop (multiple-value-bind (entry? key value) (it)
+            (if entry?
+                (print-hash-table-entry key value)
+                (return))))))
 
 (defun host-vec->string (host-vec)
   (with-output-to-string
-    (result)
+      (result)
     (write-string (write-to-string (aref host-vec 0)) result)
     (write-string "." result)
     (write-string (write-to-string (aref host-vec 1)) result)
@@ -38,7 +38,7 @@
   (let ((host (host address)))
     (if (vectorp host)
         (format stream "~a:~d" (host-vec->string host) (port address))
-      (format stream "~a:~d" (host address) (port address)))))
+        (format stream "~a:~d" (host address) (port address)))))
 
 (defparameter +node-id-length+ 20)
 
@@ -75,8 +75,8 @@
     (setf (ldb (byte 8 0) port) (aref port-vec 1))
     (setf (ldb (byte 8 8) port) (aref port-vec 0))
     (make-instance 'endpoint-address
-                 :host host
-                 :port port)))
+                   :host host
+                   :port port)))
 
 (defun read-node-id (stream)
   (let ((node-id (make-array +node-id-length+ :element-type '(unsigned-byte 8))))
@@ -116,13 +116,6 @@
 (defparameter *response-buffer*
   (make-array +max-response-bytes+ :element-type '(unsigned-byte 8)))
 
-(defparameter bencode:*binary-key-p* (lambda (keys)
-                                       (if (or (equal (first keys) +response-args-key+)
-                                               (equal (first keys) "values")
-                                               (equal (first keys) "p"))
-                                           nil
-                                         t)))
-
 (defun make-query-base (query-name query-id query-issuer-id)
   (let ((query (make-hash-table :test 'equal)))
     (setf (gethash +transaction-id-key+ query) query-id)
@@ -138,15 +131,13 @@
   query)
 
 (defun make-ping-query (&optional (query-info +default-query-base+))
-  (bencode:encode
-   (make-query-base "ping" (query-id query-info) (issuer-id query-info)) nil))
+  (bencoding/encode (make-query-base "ping" (query-id query-info) (issuer-id query-info))))
 
 (defun make-find-node-query (target-id &optional (query-info +default-query-base+))
-  (bencode:encode
+  (bencoding/encode
    (add-query-arg
     (make-query-base "find_node" (query-id query-info) (issuer-id query-info))
-    "target" target-id)
-   nil))
+    "target" target-id)))
 
 (defvar *test-info-hash*
   (make-array +node-id-length+
@@ -158,32 +149,31 @@
                                   #x7E #x57 #x4A #x10)))
 
 (defun make-get-peers-query (info-hash &optional (query-info +default-query-base+))
-  (bencode:encode
+  (bencoding/encode
    (add-query-arg
     (make-query-base "get_peers" (query-id query-info) (issuer-id query-info))
-    "info_hash" info-hash)
-   nil))
+    "info_hash" info-hash)))
 
 (defun error-response? (msg-dict)
   (equal (gethash +message-type-key+ msg-dict) +error-message+))
 
 (defun perform-query (query address)
   (with-connected-socket
-     (query-socket (socket-connect (host address) (port address)
-                                   :protocol :datagram
-                                   :timeout 2))
-     (socket-send query-socket query (length query))
-     (multiple-value-bind (response-buffer response-length)
-         (socket-receive query-socket nil +max-response-bytes+)
-       (log:debug "Recieved response:~%~a"
-                  (octets-to-string response-buffer :start 0 :end response-length))
-       (log:debug (hex-dump (subseq response-buffer 0 response-length)))
-       (bencode:decode (subseq response-buffer 0 response-length)))))
+      (query-socket (socket-connect (host address) (port address)
+                                    :protocol :datagram
+                                    :timeout 2))
+    (socket-send query-socket query (length query))
+    (multiple-value-bind (response-buffer response-length)
+        (socket-receive query-socket nil +max-response-bytes+)
+      (log:debug "Recieved response:~%~a"
+                 (octets-to-string response-buffer :start 0 :end response-length))
+      (log:debug (hexdump (subseq response-buffer 0 response-length)))
+      (bencoding/decode (subseq response-buffer 0 response-length)))))
 
 (defun parse-compact-nodes-info (info-vec)
   (let ((nodes-stream (make-flexi-stream (make-in-memory-input-stream info-vec))))
     (loop until (null (peek-byte nodes-stream nil nil nil))
-          collect (read-compact-node-info nodes-stream))))
+       collect (read-compact-node-info nodes-stream))))
 
 (defun parse-peer-values (values)
   (loop for value in values collect (compact-address->endpoint-address value)))
@@ -192,16 +182,16 @@
   (let ((response-dict (perform-query (make-ping-query) address)))
     (if (error-response? response-dict)
         (gethash +error-description-list-key+ response-dict)
-      (let ((responder-id
-             (gethash +id-key+ (gethash +response-args-key+ response-dict))))
-        (values responder-id (byte-array-to-hex-string responder-id))))))
+        (let ((responder-id
+               (gethash +id-key+ (gethash +response-args-key+ response-dict))))
+          (values responder-id (byte-array-to-hex-string responder-id))))))
 
 (defun dht/find-node (address target-node-id)
   (let ((response-dict (perform-query (make-find-node-query target-node-id) address)))
     (if (error-response? response-dict)
         (gethash +error-description-list-key+ response-dict)
-      (parse-compact-nodes-info
-       (gethash "nodes" (gethash +response-args-key+ response-dict))))))
+        (parse-compact-nodes-info
+         (gethash "nodes" (gethash +response-args-key+ response-dict))))))
 
 (defclass get-peers-response ()
   ((peer-nodes :initarg :peer-nodes
@@ -230,8 +220,8 @@
   (let ((response-dict (perform-query (make-get-peers-query info-hash) address)))
     (if (error-response? response-dict)
         (gethash +error-description-list-key+ response-dict)
-      (let* ((response-args (gethash +response-args-key+ response-dict)))
-        (make-instance 'get-peers-response
-                       :peer-nodes (gethash "nodes" response-args)
-                       :peer-values (gethash "values" response-args)
-                       :token (gethash "token" response-args))))))
+        (let* ((response-args (gethash +response-args-key+ response-dict)))
+          (make-instance 'get-peers-response
+                         :peer-nodes (gethash "nodes" response-args)
+                         :peer-values (gethash "values" response-args)
+                         :token (gethash "token" response-args))))))

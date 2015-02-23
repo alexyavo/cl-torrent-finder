@@ -2,6 +2,11 @@
 
 (defpackage #:torrent-finder
   (:use #:cl)
+  (:import-from #:utils
+                #:bencoding/encode
+                #:bencoding/decode
+                #:hexdump)
+
   (:import-from #:flexi-streams
                 #:octets-to-string
                 #:string-to-octets
