@@ -5,7 +5,8 @@
   (:import-from #:utils
                 #:bencoding/encode
                 #:bencoding/decode
-                #:hexdump)
+                #:hexdump
+                #:log-hexdump)
 
   (:import-from #:flexi-streams
                 #:octets-to-string

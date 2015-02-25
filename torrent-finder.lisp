@@ -154,20 +154,34 @@
     (make-query-base "get_peers" (query-id query-info) (issuer-id query-info))
     "info_hash" info-hash)))
 
+(defun make-announce-peer-query (info-hash port token
+                                 &optional
+                                   (implied-port nil)
+                                   (query-info +default-query-base+))
+  (let ((result (make-query-base "announce_peer"
+                                 (query-id query-info)
+                                 (issuer-id query-info))))
+    (add-query-arg result "info_hash" info-hash)
+    (add-query-arg result "port" port)
+    (add-query-arg result "token" token)
+    (when implied-port
+      (add-query-arg result "implied_port" 1))
+    (bencoding/encode result)))
+
 (defun error-response? (msg-dict)
-  (equal (gethash +message-type-key+ msg-dict) +error-message+))
+  (= (elt (gethash +message-type-key+ msg-dict) 0) (char-code #\e)))
 
 (defun perform-query (query address)
   (with-connected-socket
       (query-socket (socket-connect (host address) (port address)
                                     :protocol :datagram
-                                    :timeout 2))
+                                    :timeout 1))
     (socket-send query-socket query (length query))
     (multiple-value-bind (response-buffer response-length)
         (socket-receive query-socket nil +max-response-bytes+)
       (log:debug "Recieved response:~%~a"
                  (octets-to-string response-buffer :start 0 :end response-length))
-      (log:debug (hexdump (subseq response-buffer 0 response-length)))
+      (log-hexdump "Response dump" (subseq response-buffer 0 response-length))
       (bencoding/decode (subseq response-buffer 0 response-length)))))
 
 (defun parse-compact-nodes-info (info-vec)
@@ -177,6 +191,20 @@
 
 (defun parse-peer-values (values)
   (loop for value in values collect (compact-address->endpoint-address value)))
+
+(defclass error-response ()
+  ((error-code :initarg :error-code
+               :reader error-code)
+   (error-msg :initarg :error-msg
+              :reader error-msg)))
+
+(defmethod print-object ((err error-response) stream)
+  (format stream "Error ~d: ~a" (error-code err) (error-msg err)))
+
+(defun make-error-response (response-error)
+  (make-instance 'error-response
+                 :error-code (first response-error)
+                 :error-msg (octets-to-string (second response-error))))
 
 (defun dht/ping (address)
   (let ((response-dict (perform-query (make-ping-query) address)))
@@ -225,3 +253,13 @@
                          :peer-nodes (gethash "nodes" response-args)
                          :peer-values (gethash "values" response-args)
                          :token (gethash "token" response-args))))))
+
+(defun dht/announce-peer (address info-hash port token &key implied-port)
+  (let ((response-dict
+         (perform-query (make-announce-peer-query info-hash port token implied-port)
+                        address)))
+    (if (error-response? response-dict)
+        (make-error-response (gethash +error-description-list-key+ response-dict))
+        (let ((responder-id
+               (gethash +id-key+ (gethash +response-args-key+ response-dict))))
+          (values responder-id (byte-array-to-hex-string responder-id))))))
