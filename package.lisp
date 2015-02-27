@@ -2,11 +2,13 @@
 
 (defpackage #:torrent-finder
   (:use #:cl)
-  (:import-from #:utils
+  (:import-from #:alxcl-utils
                 #:bencoding/encode
                 #:bencoding/decode
                 #:hexdump
-                #:log-hexdump)
+                #:log-hexdump
+                #:ipv4-vec->string
+                #:endpoint-address)
 
   (:import-from #:flexi-streams
                 #:octets-to-string

@@ -4,7 +4,7 @@
   :description "DHT crawler"
   :author "Alexander Yavorovsky <alxndr.yav@gmail.com>"
   :license "MIT"
-  :depends-on (#:utils
+  :depends-on (#:alxcl-utils
                #:flexi-streams
                #:usocket
                #:ironclad

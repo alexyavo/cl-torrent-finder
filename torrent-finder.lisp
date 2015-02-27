@@ -1,56 +1,17 @@
-;;;; torrent-finder.lisp
-
 (in-package #:torrent-finder)
 
-;;; "torrent-finder" goes here. Hacks and glory await!
+(defparameter +dht/id-length+ 20)
 
-(defun print-hash-table-entry (key value)
-  (format *standard-output* "~S: ~S~%" key value))
-
-(defun print-hash-table (hash-table)
-  (with-hash-table-iterator
-      (it hash-table)
-    (loop (multiple-value-bind (entry? key value) (it)
-            (if entry?
-                (print-hash-table-entry key value)
-                (return))))))
-
-(defun host-vec->string (host-vec)
-  (with-output-to-string
-      (result)
-    (write-string (write-to-string (aref host-vec 0)) result)
-    (write-string "." result)
-    (write-string (write-to-string (aref host-vec 1)) result)
-    (write-string "." result)
-    (write-string (write-to-string (aref host-vec 2)) result)
-    (write-string "." result)
-    (write-string (write-to-string (aref host-vec 3)) result)))
-
-(defclass endpoint-address ()
-  ((host :initarg :host
-         :initform (error "must provide host")
-         :accessor host)
-   (port :initarg :port
-         :initform (error "must provide port")
-         :accessor port)))
-
-(defmethod print-object ((address endpoint-address) stream)
-  (let ((host (host address)))
-    (if (vectorp host)
-        (format stream "~a:~d" (host-vec->string host) (port address))
-        (format stream "~a:~d" (host address) (port address)))))
-
-(defparameter +node-id-length+ 20)
-
-(defparameter +default-transaction-id+ "aa")
-(defparameter +default-node-id+ "abcdefghij0123456789")
+;; Convenience definitions for debugging / interacting with DHT
+(defvar *dht/default-query-id* "aa")
+(defvar *dht/default-id+ "abcdefghij0123456789")
 
 (defclass dht/query-base ()
   ((query-id :initarg :query-id
-             :initform +default-transaction-id+
+             :initform +dht/default-query-id+
              :accessor query-id)
    (issuer-id :initarg :issuer-id
-              :initform +default-node-id+
+              :initform *dht/default-id++
               :accessor issuer-id)))
 
 (defparameter +compact-node-adress-length+ 6)
@@ -79,7 +40,7 @@
                    :port port)))
 
 (defun read-node-id (stream)
-  (let ((node-id (make-array +node-id-length+ :element-type '(unsigned-byte 8))))
+  (let ((node-id (make-array +dht/id-length+ :element-type '(unsigned-byte 8))))
     (read-sequence node-id stream)
     node-id))
 
@@ -140,7 +101,7 @@
     "target" target-id)))
 
 (defvar *test-info-hash*
-  (make-array +node-id-length+
+  (make-array +dht/id-length+
               :element-type '(unsigned-byte 8)
               :initial-contents '(#x02 #x06 #x87 #x4E
                                   #xF6 #x5C #x89 #x09
@@ -263,3 +224,7 @@
         (let ((responder-id
                (gethash +id-key+ (gethash +response-args-key+ response-dict))))
           (values responder-id (byte-array-to-hex-string responder-id))))))
+
+(defun decode-torrent-file (path)
+  (with-open-file (torrent-file path :direction :input :element-type '(unsigned-byte 8))
+    (bencoding/decode torrent-file)))
