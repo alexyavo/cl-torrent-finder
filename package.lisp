@@ -1,21 +1,15 @@
-;;;; package.lisp
-
-(defpackage #:torrent-finder
-  (:use #:cl)
-  (:import-from #:alxcl-utils
-                #:bencoding/encode
-                #:bencoding/decode
-                #:hexdump
-                #:log-hexdump
-                #:ipv4-vec->string
-                #:endpoint-address)
+(defpackage #:torrent-dht
+  (:use #:cl
+        #:alxcl-utils)
+  (:nicknames #:dht)
 
   (:import-from #:flexi-streams
                 #:octets-to-string
                 #:string-to-octets
                 #:make-in-memory-input-stream
                 #:make-flexi-stream
-                #:peek-byte)
+                #:peek-byte
+                #:with-output-to-sequence)
 
   (:import-from #:usocket
                 #:socket-connect
@@ -26,3 +20,7 @@
 
   (:import-from #:ironclad
                 #:byte-array-to-hex-string))
+
+(defpackage #:torrent-finder
+  (:use #:cl
+        #:alxcl-utils))
