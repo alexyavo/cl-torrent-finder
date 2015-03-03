@@ -1,18 +1,32 @@
 (in-package #:torrent-dht)
 
-;; (defmacro make-endpoint-addresses (&rest endpoints)
-;;   (loop for (,first-var ,second-var) on ,list by #'cddr do ,@body)
-;;   (with-gensyms (addresses host port)
-;;     (let ((addresses (loop for (host port) on endpoints by #'cddr collect
-;;                           (make-instance 'endpoint-address :host host :port port))))
-;;       (loop for addr in addresses do))
-;;     `(list
-;;       (iterate-pair (,host ,port ,endpoints)
-;;         (make-instance 'endpoint-address :host ,host :port ,port)))))
+(defclass node-info ()
+  ((node-id :initarg :node-id
+            :reader node-id)
+   (node-address :initarg :node-address
+                 :reader node-address)))
 
-(defparameter +well-known-nodes-addresses+
-  (list
-   (make-instance 'endpoint-address :host "router.bittorrent.com" :port 6881)))
+(defmethod print-object ((node node-info) stream)
+  (let* ((id (node-id node))
+         (id-string (if (null id)
+                        "NaN"
+                        (byte-array-to-hex-string id))))
+    (format stream "<DHT node: ~a, ~a>" id-string (node-address node))))
+
+(defmacro def-nodes (varname &rest args)
+  (let ((nodes
+         (loop for (host port id) on args by #'cdddr collect
+              `(make-instance 'node-info
+                              :node-id ,id
+                              :node-address (make-instance 'endpoint-address
+                                                          :host ,host :port ,port)))))
+    `(defparameter ,varname (list ,@nodes))))
+
+(def-nodes +well-known-nodes+
+    "router.bittorrent.com"  6881 nil
+    "router.utorrent.com"    6881 nil
+;    "router.bitcoment.com"   6881 nil
+    "dht.transmissionbt.com" 6881 nil)
 
 (defparameter +id-length+ 20)
 
@@ -24,18 +38,7 @@
 (defvar *default-query-id* "aa")
 (defvar *default-id* "abcdefghij0123456789")
 
-(defclass node-info ()
-  ((node-id :initarg :node-id
-            :reader node-id)
-   (node-address :initarg :node-address
-                 :reader node-address)))
-
-(defmethod print-object ((node node-info) stream)
-  (format stream "[~a, ~a]"
-          (byte-array-to-hex-string (node-id node))
-          (node-address node)))
-
-(defclass error-response ()
+(define-condition error-response (error)
   ((error-code :initarg :error-code
                :reader error-code)
    (error-msg :initarg :error-msg
@@ -73,7 +76,7 @@
 (defun read-compact-address (stream)
   (make-instance 'endpoint-address
                  :host (read-octets stream 4)
-                 :port (read-uint32 stream)))
+                 :port (read-uint16 stream)))
 
 (defun read-compact-node-info (stream)
   (make-instance 'node-info
@@ -86,6 +89,16 @@
       (setf (gethash arg-key query-args) arg-val))
     (setf (gethash "a" query) query-args))
   query)
+
+(defun error-response? (response)
+  (= (elt (gethash "y" response) 0) (char-code #\e)))
+
+(defun parse-compact-nodes-info (info-vec)
+  (if (null info-vec)
+      nil
+      (let ((nodes-stream (make-flexi-stream (make-in-memory-input-stream info-vec))))
+        (loop until (null (peek-byte nodes-stream nil nil nil))
+           collect (read-compact-node-info nodes-stream)))))
 
 (defvar *query-id* *default-query-id*)
 (defvar *node-id* *default-id*)
@@ -125,56 +138,58 @@ rebound on need, otherwise they are bound to default values."
     (when implied-port
       (add-query-args result "implied_port" 1))))
 
-(defun perform-query (query address)
-  (with-connected-socket
-      (query-socket (socket-connect (host address) (port address)
-                                    :protocol :datagram
-                                    :timeout 1))
-    (socket-send query-socket query (length query))
-    (multiple-value-bind (response-buffer response-length)
-        (socket-receive query-socket nil +max-response-bytes+)
-      (log:debug "Recieved response:~%~a"
-                 (octets-to-string response-buffer :start 0 :end response-length))
-      (log-hexdump "Response dump" (subseq response-buffer 0 response-length))
-      (bencoding/decode (subseq response-buffer 0 response-length)))))
-
-(defun error-response? (response)
-  (= (elt (gethash "y" response) 0) (char-code #\e)))
-
-(defun parse-compact-nodes-info (info-vec)
-  (let ((nodes-stream (make-flexi-stream (make-in-memory-input-stream info-vec))))
-    (loop until (null (peek-byte nodes-stream nil nil nil))
-       collect (read-compact-node-info nodes-stream))))
-
-(defmacro with-response-to ((response-args) query address &body body)
-  "Performs query an in case of an error, returns error description
-list"
-  (with-gensyms (response)
-    `(let* ((,response (perform-query ,query ,address))
-            (,response-args (gethash "r" ,response)))
-       (if (error-response? ,response)
-           (gethash "e" ,response)
-           (progn ,@body)))))
+(defun perform-query (address query)
+  "Returns query response arguments"
+  (let* ((response (bencoding/decode (udp/send-receive address query)))
+         (response-args (gethash "r" response)))
+    (if (error-response? response)
+        (let ((error-desc-list (gethash "e" response)))
+          (error 'error-response
+                 :error-code (first error-desc-list)
+                 :error-msg (octets-to-string (second error-desc-list))))
+        response-args)))
 
 (defun ping (address)
-  (with-response-to (response) (make-ping-query) address
-    (let ((responder-id (gethash "id" response)))
-      (values responder-id (byte-array-to-hex-string responder-id)))))
+  "Returns pinged node id"
+  (let ((response (perform-query address (make-ping-query))))
+    (gethash "id" response)))
 
 (defun find-node (address target-node-id)
-  (with-response-to (response) (make-find-node-query target-node-id) address
-    (parse-compact-nodes-info
-     (gethash "nodes" response))))
+  "Returns K closes nodes to target-node-id"
+  (let ((response (perform-query address (make-find-node-query target-node-id))))
+    (parse-compact-nodes-info (gethash "nodes" response))))
 
 (defun get-peers (address info-hash)
-  (with-response-to (response) (make-get-peers-query info-hash) address
+  "Returns closes peers, peers and token"
+  (let ((response (perform-query address (make-get-peers-query info-hash))))
     (make-instance 'get-peers-response
                    :peer-nodes (gethash "nodes" response)
                    :peer-values (gethash "values" response)
                    :token (gethash "token" response))))
 
 (defun announce-peer (address info-hash port token &optional implied-port)
-  (with-response-to (response)
-      (make-announce-peer-query info-hash port token implied-port) address
-    (let ((responder-id (gethash "id" response)))
-      (values responder-id (byte-array-to-hex-string responder-id)))))
+  (perform-query address (make-announce-peer-query info-hash port token implied-port)))
+
+(defmacro on-query-success ((response (query-fn address &rest query-args)) &body body)
+  `(handler-case
+       (let ((,response (,query-fn ,address ,@query-args)))
+         ,@body)
+     (usocket:host-unreachable-error ()
+       (log:warn "Unreachable node: ~a" ,address))
+     (usocket:timeout-error ()
+       (log:warn "Timeout on node: ~a" ,address))
+     (usocket:connection-refused-error ()
+       (log:warn "Connection refused by ~a" ,address))
+     (error-response (err)
+       (log:warn "Got error response: ~a" err))))
+
+(defun get-torrent-peers (info-hash &key (max-peers 10))
+  "Returns requested amount of peers that have info-hash"
+  (let ((peers '())
+        (nodes +well-known-nodes+))
+    (while (and (> (length nodes) 0)
+                (< (length peers) max-peers))
+      (on-query-success (node-peers (get-peers (node-address (pop nodes)) info-hash))
+        (setf peers (append peers (peer-values node-peers)))
+        (setf nodes (append nodes (peer-nodes node-peers)))))
+    peers))

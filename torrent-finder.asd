@@ -11,6 +11,6 @@
                #:log4cl)
   :serial t
   :components ((:file "package")
-               (:file "torrent-dht")
+               (:file "dht")
                (:file "torrent-finder"
-                      :depends-on ("torrent-dht"))))
+                      :depends-on ("dht"))))
